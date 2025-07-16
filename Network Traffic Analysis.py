@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
-from tkcalendar import Calendar
+from tkcalendar import DateEntry
 
 # Global variables to store data
 dst_counts = None
@@ -56,36 +56,44 @@ root.geometry("800x600")
 today = datetime.today()
 max_date = today
 min_date = today - timedelta(days=10)
-calendar_label = f"Select Date ({min_date.strftime('%B %d, %Y')} to {max_date.strftime('%B %d, %Y')}):"
+calendar_label = f"Select Date ({min_date.strftime('%B %d, %Y')} to {max_date.strftime('%B %d, %Y')})"
 
-# Create calendar widget
+# Create date entry widget
 tk.Label(root, text=calendar_label, font=("Arial", 12, "bold")).pack(pady=10)
-cal = Calendar(root, selectmode='day', 
-               year=today.year, month=today.month, day=today.day,
-               date_pattern='yyyymmdd', mindate=min_date, maxdate=max_date)
-cal.pack(pady=10)
+date_entry = DateEntry(root, width=30, date_pattern="yyyy-mm-dd",
+                       mindate=min_date, maxdate=max_date,
+                       year=today.year, month=today.month, day=today.day)
+date_entry.pack(pady=5)
 
 # Button to fetch data
 def on_date_submit():
-    date_str = cal.get_date()
+    date_str = date_entry.get().strip()
+    print(f"Attempting to process date from DateEntry: '{date_str}'")  # Debug print
+    if not date_str:
+        messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
+        return
     try:
-        # Validate date format and range
-        selected_date = datetime.strptime(date_str, "%Y%m%d")
+        # Convert date to YYYYMMDD for fetch_data
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d")
+        date_str_ymd = selected_date.strftime("%Y%m%d")
+        print(f"Converted to YYYYMMDD: {date_str_ymd}")  # Debug print
+        # Validate date range (redundant with DateEntry but robust)
         if selected_date < min_date:
-            messagebox.showerror("Invalid Date", f"Selected date is before {min_date.strftime('%B %d, %Y')}. Please choose a date between {min_date.strftime('%B %d, %Y')} and {max_date.strftime('%B %d, %Y')}.")
+            messagebox.showerror("Invalid Date", f"Selected date is before {min_date.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
         if selected_date > max_date:
-            messagebox.showerror("Invalid Date", f"Selected date is after {max_date.strftime('%B %d, %Y')}. Please choose a date between {min_date.strftime('%B %d, %Y')} and {max_date.strftime('%B %d, %Y')}.")
+            messagebox.showerror("Invalid Date", f"Selected date is after {max_date.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
-        fetch_data(date_str)
-    except ValueError:
-        messagebox.showerror("Invalid Date", "Please select a valid date from the calendar.")
+        fetch_data(date_str_ymd)
+    except ValueError as e:
+        messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}'. Please select a valid date. Error: {e}")
+        return
 
 tk.Button(root, text="Get Date", command=on_date_submit).pack(pady=10)
 
 # Create dropdown (Combobox)
 tk.Label(root, text="Select Destination IP:", font=("Arial", 12)).pack(pady=10)
-combo = ttk.Combobox(root, values=unique_ips, state="readonly", width=30)
+combo = ttk.Combobox(root, values=unique_ips, state='readonly', width=30)
 combo.pack(pady=5)
 combo.set("Select an IP")
 
