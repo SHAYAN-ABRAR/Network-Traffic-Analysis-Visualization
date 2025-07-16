@@ -6,7 +6,7 @@ The "Network Traffic Analysis Visualization" is a Python-based application desig
 This tool is beneficial for network administrators and security analysts to understand traffic patterns and troubleshoot network-related issues.
 
 ## Features
-- **Calendar Interface**: Select a date from a calendar widget to retrieve traffic data for that specific day.
+- **Calendar Interface**: Select a date from the calendar widget to retrieve traffic data for that specific day.
 - **Dynamic IP Dropdown**: Choose a destination IP address from a dropdown to view the corresponding traffic data.
 - **Scatter Plot**: The relationship between destination ports and traffic counts is displayed using scatter plots, making it easier to spot trends.
 
