@@ -21,6 +21,23 @@ def fetch_data_frame1(date_str):
 def fetch_data_frame2(date_str):
     update_frame_data('frame2', date_str, "SELECT dstport, COUNT(dstport) as count FROM log_{date_str} WHERE dstport != '0' GROUP BY dstport ORDER BY count DESC LIMIT 20")
 
+# Helper function to fetch IP counts for a specific dstport
+def fetch_ip_counts(date_str, dstport):
+    try:
+        engine = mysql.connector.connect(
+            host="192.168.100.25",
+            user="sysuser",
+            password="DT1Y9Q0EtBwI0",
+            database="syslog"
+        )
+        query = f"SELECT dst, COUNT(dst) as count FROM log_{date_str} WHERE dstport = '{dstport}' GROUP BY dst ORDER BY count DESC LIMIT 20"
+        df = pd.read_sql(query, engine)
+        engine.close()
+        return df
+    except Exception as e:
+        messagebox.showerror("Database Error", f"Error fetching IP counts for dstport {dstport}: {e}")
+        return pd.DataFrame(columns=['dst', 'count'])
+
 # Helper function to update frame data
 def update_frame_data(frame_key, date_str, query_template):
     frame = frame_data[frame_key]
@@ -67,6 +84,8 @@ def update_frame_data(frame_key, date_str, query_template):
         ax.clear()
         canvas.draw()
     elif frame_key == 'frame2':
+        port_combo['values'] = frame['unique_dstports']
+        port_combo.set("Select dstport" if frame['unique_dstports'] else "No dstports available")
         ax_bar.clear()
         canvas_bar.draw()
 
@@ -183,11 +202,11 @@ def on_date_submit_frame2():
 
 tk.Button(second_window, text="Get Date", command=on_date_submit_frame2).pack(pady=10)
 
-# Remove dropdown since it's not needed
-# tk.Label(second_window, text="Select dstport:", font=("Arial", 12)).pack(pady=10)
-# port_combo = ttk.Combobox(second_window, values=frame_data['frame2']['unique_dstports'], state='readonly', width=30)
-# port_combo.pack(pady=5)
-# port_combo.set("Select dstport")
+# Create dropdown (Combobox) for second frame
+tk.Label(second_window, text="Select dstport:", font=("Arial", 12)).pack(pady=10)
+port_combo = ttk.Combobox(second_window, values=frame_data['frame2']['unique_dstports'], state='readonly', width=30)
+port_combo.pack(pady=5)
+port_combo.set("Select dstport")
 
 # Create Matplotlib figure for bar chart
 fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
@@ -195,22 +214,38 @@ canvas_bar = FigureCanvasTkAgg(fig_bar, master=second_window)
 canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
 # Function to update bar chart
-def update_bar_chart():
-    if frame_data['frame2']['dst_counts'] is not None:
-        print(f"Updating bar chart with dst_counts: {frame_data['frame2']['dst_counts'].head()}")
-        if not frame_data['frame2']['dst_counts'].empty:
+def update_bar_chart(event=None):
+    if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
+        selected_port = port_combo.get()
+        print(f"Updating bar chart for dstport: {selected_port}")
+        ip_counts = fetch_ip_counts(date_entry_frame2.get().strip().replace('-', ''), selected_port)
+        print(f"IP counts data: {ip_counts.head()}")
+        if not ip_counts.empty:
             ax_bar.clear()
-            ax_bar.bar(frame_data['frame2']['dst_counts']['dstport'], frame_data['frame2']['dst_counts']['count'], color='purple')
-            ax_bar.set_xlabel('Destination Port (dstport)')
+            ax_bar.bar(ip_counts['dst'], ip_counts['count'], color='purple')
+            ax_bar.set_xlabel('Destination IP (dst)')
             ax_bar.set_ylabel('Count of Hits')
-            ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
+            ax_bar.set_title(f'Top 20 IP Hits for dstport {selected_port} on {date_entry_frame2.get()}')
             ax_bar.tick_params(axis='x', rotation=45)
             fig_bar.tight_layout()
             canvas_bar.draw()
         else:
-            print("Warning: dst_counts is empty, bar chart not updated.")
+            print("Warning: IP counts is empty, bar chart not updated.")
             ax_bar.clear()
             canvas_bar.draw()
+    elif frame_data['frame2']['dst_counts'] is not None and port_combo.get() == "Select dstport":
+        print(f"Updating bar chart with default top 20 dstport counts: {frame_data['frame2']['dst_counts'].head()}")
+        ax_bar.clear()
+        ax_bar.bar(frame_data['frame2']['dst_counts']['dstport'], frame_data['frame2']['dst_counts']['count'], color='purple')
+        ax_bar.set_xlabel('Destination Port (dstport)')
+        ax_bar.set_ylabel('Count of Hits')
+        ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
+        ax_bar.tick_params(axis='x', rotation=45)
+        fig_bar.tight_layout()
+        canvas_bar.draw()
+
+# Bind dropdown selection to update_bar_chart
+port_combo.bind("<<ComboboxSelected>>", update_bar_chart)
 
 # Fetch initial data for today's date in both frames and update charts
 fetch_data_frame1(today.strftime("%Y%m%d"))
