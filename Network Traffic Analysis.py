@@ -17,12 +17,8 @@ frame_data = {
 def fetch_data_frame1(date_str):
     update_frame_data('frame1', date_str, "SELECT * FROM log_{date_str}")
 
-# Function to fetch data for the second frame with corrected query
+# Function to fetch data for the second frame (single query fetching dstport and dst counts)
 def fetch_data_frame2(date_str):
-    update_frame_data('frame2', date_str, "SELECT dstport, COUNT(dstport) as count FROM log_{date_str} WHERE dstport != '0' GROUP BY dstport ORDER BY count DESC LIMIT 20")
-
-# Helper function to fetch IP counts for a specific dstport
-def fetch_ip_counts(date_str, dstport):
     try:
         engine = mysql.connector.connect(
             host="192.168.100.25",
@@ -30,13 +26,31 @@ def fetch_ip_counts(date_str, dstport):
             password="DT1Y9Q0EtBwI0",
             database="syslog"
         )
-        query = f"SELECT dst, COUNT(dst) as count FROM log_{date_str} WHERE dstport = '{dstport}' GROUP BY dst ORDER BY count DESC LIMIT 20"
+        # Fetching both dstport counts and dst counts for each dstport in one query
+        query = f"""
+            SELECT dstport, dst, COUNT(*) as count
+            FROM log_{date_str}
+            WHERE dstport != '0'
+            GROUP BY dstport, dst
+            ORDER BY dstport, count DESC
+        """
         df = pd.read_sql(query, engine)
         engine.close()
-        return df
+
+        # Store the data for both dstport counts and IP counts
+        frame_data['frame2']['dst_counts'] = df
+        frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique())
+        
+        print(f"Debug: Frame 2 dst_counts shape: {df.shape}, columns: {df.columns.tolist()}")
+        
+        # Populate the dropdown for dstport
+        port_combo['values'] = frame_data['frame2']['unique_dstports']
+        port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
+        
     except Exception as e:
-        messagebox.showerror("Database Error", f"Error fetching IP counts for dstport {dstport}: {e}")
-        return pd.DataFrame(columns=['dst', 'count'])
+        messagebox.showerror("Database Error", f"Error fetching data for {date_str}: {e}")
+        frame_data['frame2']['dst_counts'] = None
+        frame_data['frame2']['unique_dstports'] = []
 
 # Helper function to update frame data
 def update_frame_data(frame_key, date_str, query_template):
@@ -218,11 +232,18 @@ def update_bar_chart(event=None):
     if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
         selected_port = port_combo.get()
         print(f"Updating bar chart for dstport: {selected_port}")
-        ip_counts = fetch_ip_counts(date_entry_frame2.get().strip().replace('-', ''), selected_port)
-        print(f"IP counts data: {ip_counts.head()}")
-        if not ip_counts.empty:
+
+        # Filter data based on selected dstport
+        filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
+        
+        # Get the top 20 IPs that hit this port (sorted by the count)
+        top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count')
+        
+        print(f"Filtered data for dstport {selected_port}:\n{top_20_ips.head()}")
+        
+        if not top_20_ips.empty:
             ax_bar.clear()
-            ax_bar.bar(ip_counts['dst'], ip_counts['count'], color='purple')
+            ax_bar.bar(top_20_ips.index, top_20_ips['count'], color='purple')
             ax_bar.set_xlabel('Destination IP (dst)')
             ax_bar.set_ylabel('Count of Hits')
             ax_bar.set_title(f'Top 20 IP Hits for dstport {selected_port} on {date_entry_frame2.get()}')
@@ -230,13 +251,15 @@ def update_bar_chart(event=None):
             fig_bar.tight_layout()
             canvas_bar.draw()
         else:
-            print("Warning: IP counts is empty, bar chart not updated.")
+            print("Warning: No data for selected dstport, bar chart not updated.")
             ax_bar.clear()
             canvas_bar.draw()
     elif frame_data['frame2']['dst_counts'] is not None and port_combo.get() == "Select dstport":
         print(f"Updating bar chart with default top 20 dstport counts: {frame_data['frame2']['dst_counts'].head()}")
         ax_bar.clear()
-        ax_bar.bar(frame_data['frame2']['dst_counts']['dstport'], frame_data['frame2']['dst_counts']['count'], color='purple')
+        # Limit to top 20 dstports based on count
+        top_20 = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+        ax_bar.bar(top_20.index, top_20['count'], color='purple')
         ax_bar.set_xlabel('Destination Port (dstport)')
         ax_bar.set_ylabel('Count of Hits')
         ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
