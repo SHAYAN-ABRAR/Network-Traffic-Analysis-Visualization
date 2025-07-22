@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
 from tkcalendar import DateEntry
+import socket
+
+# Function to resolve IP to domain name with error handling
+def get_domain_name(ip_address):
+    try:
+        hostname = socket.gethostbyaddr(ip_address)[0]
+        return hostname
+    except (socket.herror, OSError):
+        return ip_address  # Fallback to IP if resolution fails
 
 # Global variables to store data for each frame
 frame_data = {
@@ -20,30 +29,25 @@ def fetch_data_frame1(date_str):
 # Function to fetch data for the second frame (single query fetching dstport and dst counts)
 def fetch_data_frame2(date_str):
     try:
-        engine = mysql.connector.connect(
+        with mysql.connector.connect(
             host="192.168.100.25",
             user="sysuser",
             password="DT1Y9Q0EtBwI0",
             database="syslog"
-        )
-        # Fetching both dstport counts and dst counts for each dstport in one query
-        query = f"""
-            SELECT dstport, dst, COUNT(*) as count
-            FROM log_{date_str}
-            WHERE dstport != '0'
-            GROUP BY dstport, dst
-            ORDER BY dstport, count DESC
-        """
-        df = pd.read_sql(query, engine)
-        engine.close()
-
-        # Store the data for both dstport counts and IP counts
-        frame_data['frame2']['dst_counts'] = df
-        frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique())
+        ) as engine:
+            query = f"""
+                SELECT dstport, dst, COUNT(*) as count
+                FROM log_{date_str}
+                WHERE dstport != '0'
+                GROUP BY dstport, dst
+                ORDER BY dstport, count DESC
+            """
+            df = pd.read_sql(query, engine)
+            frame_data['frame2']['dst_counts'] = df
+            frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique())
         
         print(f"Debug: Frame 2 dst_counts shape: {df.shape}, columns: {df.columns.tolist()}")
         
-        # Populate the dropdown for dstport
         port_combo['values'] = frame_data['frame2']['unique_dstports']
         port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
         
@@ -56,33 +60,31 @@ def fetch_data_frame2(date_str):
 def update_frame_data(frame_key, date_str, query_template):
     frame = frame_data[frame_key]
     try:
-        engine = mysql.connector.connect(
+        with mysql.connector.connect(
             host="192.168.100.25",
             user="sysuser",
             password="DT1Y9Q0EtBwI0",
             database="syslog"
-        )
-        query = query_template.format(date_str=date_str)
-        df = pd.read_sql(query, engine)
-        if frame_key == 'frame1':
-            frame['dst_counts'] = df.groupby(['dst', 'dstport']).size().reset_index(name='count')
-        else:  # frame2
-            frame['dst_counts'] = df  # Direct from query, two columns: dstport, count
-        print(f"Debug: {frame_key} dst_counts shape: {frame['dst_counts'].shape}, columns: {frame['dst_counts'].columns.tolist()}, data: {frame['dst_counts'].head()}")  # Enhanced debug print
-        engine.close()
+        ) as engine:
+            query = query_template.format(date_str=date_str)
+            df = pd.read_sql(query, engine)
+            if frame_key == 'frame1':
+                frame['dst_counts'] = df.groupby(['dst', 'dstport']).size().reset_index(name='count')
+            else:
+                frame['dst_counts'] = df
+        print(f"Debug: {frame_key} dst_counts shape: {frame['dst_counts'].shape}, columns: {frame['dst_counts'].columns.tolist()}, data: {frame['dst_counts'].head()}")
     except Exception as e:
         messagebox.showerror("Database Error", f"Database connection lost or table not found for {date_str}: {e}")
         frame['dst_counts'] = None
         frame['unique_ips'] = []
         frame['unique_dstports'] = []
     
-    # Update unique IPs and dstports
     if frame['dst_counts'] is not None:
         if frame_key == 'frame1':
             frame['unique_ips'] = sorted(frame['dst_counts']['dst'].unique())
             frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
-        else:  # frame2
-            frame['unique_ips'] = []  # Not needed for frame2
+        else:
+            frame['unique_ips'] = []
             frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         num_items = len(frame['unique_ips']) if frame_key == 'frame1' else len(frame['unique_dstports'])
         print(f"Number of unique {'IPs' if frame_key == 'frame1' else 'dstports'} for {date_str} in {frame_key}: {num_items}")
@@ -91,7 +93,6 @@ def update_frame_data(frame_key, date_str, query_template):
         frame['unique_dstports'] = []
         print(f"No data available for {date_str} in {frame_key}")
     
-    # Update respective dropdown
     if frame_key == 'frame1':
         combo['values'] = frame['unique_ips']
         combo.set("Select an IP")
@@ -129,7 +130,7 @@ def on_date_submit_frame1():
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
-        selected_date = datetime.strptime(date_str, "%Y-%m-%d")
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d")  # Corrected format
         date_str_ymd = selected_date.strftime("%Y%m%d")
         print(f"Converted to YYYYMMDD (Frame 1): {date_str_ymd}")
         if selected_date < min_date:
@@ -176,7 +177,7 @@ combo.bind("<<ComboboxSelected>>", update_plot)
 
 # Create second frame (Toplevel window)
 second_window = tk.Toplevel(root)
-second_window.title("Port vs IP Count")
+second_window.title("Port vs Domain Count")
 second_window.geometry("800x600")
 
 # Define dynamic date range for second frame
@@ -199,7 +200,7 @@ def on_date_submit_frame2():
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
-        selected_date = datetime.strptime(date_str, "%Y-%m-%d")
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d")  # Corrected format
         date_str_ymd = selected_date.strftime("%Y%m%d")
         print(f"Converted to YYYYMMDD (Frame 2): {date_str_ymd}")
         if selected_date < min_date_frame2:
@@ -238,15 +239,17 @@ def update_bar_chart(event=None):
         
         # Get the top 20 IPs that hit this port (sorted by the count)
         top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count')
+        top_20_ips = top_20_ips.reset_index()  # Ensure 'dst' is a column, not index
+        top_20_ips['domain'] = top_20_ips['dst'].apply(get_domain_name)
         
         print(f"Filtered data for dstport {selected_port}:\n{top_20_ips.head()}")
         
         if not top_20_ips.empty:
             ax_bar.clear()
-            ax_bar.bar(top_20_ips.index, top_20_ips['count'], color='purple')
-            ax_bar.set_xlabel('Destination IP (dst)')
+            ax_bar.bar(top_20_ips["domain"], top_20_ips['count'], color='purple')
+            ax_bar.set_xlabel('Destination Domain')
             ax_bar.set_ylabel('Count of Hits')
-            ax_bar.set_title(f'Top 20 IP Hits for dstport {selected_port} on {date_entry_frame2.get()}')
+            ax_bar.set_title(f'Top 20 Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
             ax_bar.tick_params(axis='x', rotation=45)
             fig_bar.tight_layout()
             canvas_bar.draw()
@@ -257,7 +260,6 @@ def update_bar_chart(event=None):
     elif frame_data['frame2']['dst_counts'] is not None and port_combo.get() == "Select dstport":
         print(f"Updating bar chart with default top 20 dstport counts: {frame_data['frame2']['dst_counts'].head()}")
         ax_bar.clear()
-        # Limit to top 20 dstports based on count
         top_20 = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
         ax_bar.bar(top_20.index, top_20['count'], color='purple')
         ax_bar.set_xlabel('Destination Port (dstport)')
@@ -272,9 +274,8 @@ port_combo.bind("<<ComboboxSelected>>", update_bar_chart)
 
 # Fetch initial data for today's date in both frames and update charts
 fetch_data_frame1(today.strftime("%Y%m%d"))
-update_plot(None)  # Update scatter plot with initial data
+update_plot(None)
 fetch_data_frame2(today.strftime("%Y%m%d"))
-update_bar_chart()  # Update bar chart with initial data
+update_bar_chart()
 
-# Start the Tkinter event loop
 root.mainloop()
