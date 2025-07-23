@@ -40,6 +40,8 @@ def insert_ip_info(ip_address, count, domain):
         execution_time_ms = int((time.time() - start_time) * 1000)
         unique_id = int(time.time() * 1000000)  # Unique ID based on timestamp with microseconds
         
+        if not domain or domain == ip_address:
+            domain = as_domain if as_domain and as_domain != 'N/A' else get_domain_name(ip_address)
         print(f"IP Info for {ip_address}: IP: {ip}, Count: {count}, Domain: {domain}")
         print(f"ASN: {asn}, AS Name: {as_name}, AS Domain: {as_domain}")
         print(f"Country Code: {country_code}, Country: {country}, Continent Code: {continent_code}, Continent: {continent}")
@@ -53,14 +55,13 @@ def insert_ip_info(ip_address, count, domain):
                 database="syslog"
             ) as engine:
                 cursor = engine.cursor()
-                # Check if IP already exists
                 cursor.execute("SELECT ip FROM LOG_DNS WHERE ip = %s", (ip,))
                 if cursor.fetchone() is None:
                     insert_query = """
                         INSERT INTO LOG_DNS (ID, ip, asn, NAME, DOMAIN, country_code, country, continent_code, continent)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
-                    cursor.execute(insert_query, (unique_id, ip, asn, as_name, as_domain, country_code, country, continent_code, continent))
+                    cursor.execute(insert_query, (unique_id, ip, asn, as_name, domain, country_code, country, continent_code, continent))
                     engine.commit()
                     print(f"Successfully inserted IP info for {ip_address} into LOG_DNS")
                 else:
@@ -68,10 +69,10 @@ def insert_ip_info(ip_address, count, domain):
         except mysql.connector.Error as e:
             print(f"Error inserting IP info for {ip_address} into LOG_DNS: {e}")
         
-        return data
+        return {'domain': domain, 'data': data}
     except requests.RequestException as e:
         print(f"Error fetching IP info for {ip_address}: {e}")
-        return None
+        return {'domain': ip_address, 'data': None}
 
 # Global variables to store data for each frame
 frame_data = {
@@ -142,7 +143,7 @@ def update_frame_data(frame_key, date_str, query_template):
             frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         else:
             frame['unique_ips'] = []
-            frame_data['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
+            frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         num_items = len(frame['unique_ips']) if frame_key == 'frame1' else len(frame['unique_dstports'])
         print(f"Number of unique {'IPs' if frame_key == 'frame1' else 'dstports'} for {date_str} in {frame_key}: {num_items}")
     else:
@@ -156,7 +157,7 @@ def update_frame_data(frame_key, date_str, query_template):
         ax.clear()
         canvas.draw()
     elif frame_key == 'frame2':
-        port_combo['values'] = frame['unique_dstports']
+        port_combo['values'] = frame_data['frame2']['unique_dstports']
         port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
         ax_bar.clear()
         canvas_bar.draw()
@@ -289,37 +290,60 @@ port_combo = ttk.Combobox(second_window, values=frame_data['frame2']['unique_dst
 port_combo.pack(pady=5)
 port_combo.set("Select dstport")
 
-# Create Matplotlib figure for bar chart
+# Create Matplotlib figure for pie chart
 fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
 canvas_bar = FigureCanvasTkAgg(fig_bar, master=second_window)
 canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
-# Function to update bar chart and insert top 20 IPs
+# Function to update pie chart and insert top 20 IPs
 def update_bar_chart(event=None):
     if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
         selected_port = port_combo.get()
-        print(f"Updating bar chart for dstport: {selected_port}")
+        print(f"Updating pie chart for dstport: {selected_port}")
         filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
         top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count')
         top_20_ips = top_20_ips.reset_index()
-        top_20_ips['domain'] = top_20_ips['dst'].apply(get_domain_name)
-        print(f"Filtered data for dstport {selected_port}:\n{top_20_ips.head()}")
-        
-        # Insert top 20 IPs into LOG_DNS
+        # 1.0 top_20_ips contains ['dstport', 'dst', 'count'] use only dst (contains IP's) column
+        # 1.1 ** change to array of dst if required . Lt it be called "ipFromDf"
+
+        # 2. Execute query using the above IP list (1.0)/array (1.1)
+        # 2.1 eg: resultList = SELECT ip FROM `LOG_DNS` where ip in ipFromDf (1.1)
+
+        # 3. Keep only the unique ip's which is not in the list resultList (2.1)
+        # 3.1 : uniqueIpList = [ip for ip in ipList1 if ip not in resultList and ipList1.count(ip) == 1]
+
+        # 4. Insert the uniqueIpLis's data into "LOG_DNS" using function : insert_ip_info
+
+        # 5. Collect all the domain name for ip's in top_20_ips (already done) then plot
+
+        # Fetch domains from API and insert if new
+        domains = {}
         for index, row in top_20_ips.iterrows():
-            insert_ip_info(row['dst'], row['count'], row['domain'])
+            ip = row['dst']
+            info = insert_ip_info(ip, row['count'], ip)  # Pass IP as initial domain to trigger API fetch
+            domains[ip] = info['domain']  # Use the newly fetched domain
         
-        if not top_20_ips.empty:
+        # Aggregate counts by domain
+        domain_counts = {}
+        for ip, domain in domains.items():
+            if domain in domain_counts:
+                domain_counts[domain] += top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
+            else:
+                domain_counts[domain] = top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
+        
+        if domain_counts:
             ax_bar.clear()
-            ax_bar.bar(top_20_ips["domain"], top_20_ips['count'], color='purple')
-            ax_bar.set_xlabel('Destination Domain')
-            ax_bar.set_ylabel('Count of Hits')
-            ax_bar.set_title(f'Top 20 Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
-            ax_bar.tick_params(axis='x', rotation=80)
+            labels = list(domain_counts.keys())
+            sizes = list(domain_counts.values())
+            total = sum(sizes)
+            percentages = [size / total * 100 for size in sizes]
+            ax_bar.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=60)
+            ax_bar.axis('equal')  # Equal aspect ratio ensures pie is drawn as a circle
+            ax_bar.set_title(f'Percentage of Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
             fig_bar.tight_layout()
             canvas_bar.draw()
         else:
-            print("Warning: No data for selected dstport, bar chart not updated.")
+            print("Warning: No data for selected dstport, pie chart not updated.")
             ax_bar.clear()
             canvas_bar.draw()
     elif frame_data['frame2']['dst_counts'] is not None and port_combo.get() == "Select dstport":
