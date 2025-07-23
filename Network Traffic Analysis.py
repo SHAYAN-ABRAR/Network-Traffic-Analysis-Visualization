@@ -7,6 +7,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
 from tkcalendar import DateEntry
 import socket
+import requests
+import json
+import time
 
 # Function to resolve IP to domain name with error handling
 def get_domain_name(ip_address):
@@ -15,6 +18,60 @@ def get_domain_name(ip_address):
         return hostname
     except (socket.herror, OSError):
         return ip_address  # Fallback to IP if resolution fails
+
+# Function to fetch IP info from ipinfo.io API and insert into LOG_DNS
+def insert_ip_info(ip_address, count, domain):
+    start_time = time.time()
+    try:
+        url = f"https://api.ipinfo.io/lite/{ip_address}?token=cf9348bd3ea2ab"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        ip = data.get('ip', 'N/A')
+        asn = data.get('asn', 'N/A')
+        as_name = data.get('as_name', 'N/A')
+        as_domain = data.get('as_domain', 'N/A')
+        country_code = data.get('country_code', 'N/A')
+        country = data.get('country', 'N/A')
+        continent_code = data.get('continent_code', 'N/A')
+        continent = data.get('continent', 'N/A')
+        
+        execution_time_ms = int((time.time() - start_time) * 1000)
+        unique_id = int(time.time() * 1000000)  # Unique ID based on timestamp with microseconds
+        
+        print(f"IP Info for {ip_address}: IP: {ip}, Count: {count}, Domain: {domain}")
+        print(f"ASN: {asn}, AS Name: {as_name}, AS Domain: {as_domain}")
+        print(f"Country Code: {country_code}, Country: {country}, Continent Code: {continent_code}, Continent: {continent}")
+        print(f"Execution Time (ms): {execution_time_ms}")
+        
+        try:
+            with mysql.connector.connect(
+                host="192.168.100.25",
+                user="sysuser",
+                password="DT1Y9Q0EtBwI0",
+                database="syslog"
+            ) as engine:
+                cursor = engine.cursor()
+                # Check if IP already exists
+                cursor.execute("SELECT ip FROM LOG_DNS WHERE ip = %s", (ip,))
+                if cursor.fetchone() is None:
+                    insert_query = """
+                        INSERT INTO LOG_DNS (ID, ip, asn, NAME, DOMAIN, country_code, country, continent_code, continent)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                    cursor.execute(insert_query, (unique_id, ip, asn, as_name, as_domain, country_code, country, continent_code, continent))
+                    engine.commit()
+                    print(f"Successfully inserted IP info for {ip_address} into LOG_DNS")
+                else:
+                    print(f"IP {ip_address} already exists in LOG_DNS, skipping insertion")
+        except mysql.connector.Error as e:
+            print(f"Error inserting IP info for {ip_address} into LOG_DNS: {e}")
+        
+        return data
+    except requests.RequestException as e:
+        print(f"Error fetching IP info for {ip_address}: {e}")
+        return None
 
 # Global variables to store data for each frame
 frame_data = {
@@ -26,7 +83,7 @@ frame_data = {
 def fetch_data_frame1(date_str):
     update_frame_data('frame1', date_str, "SELECT * FROM log_{date_str}")
 
-# Function to fetch data for the second frame (single query fetching dstport and dst counts)
+# Function to fetch data for the second frame
 def fetch_data_frame2(date_str):
     try:
         with mysql.connector.connect(
@@ -85,7 +142,7 @@ def update_frame_data(frame_key, date_str, query_template):
             frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         else:
             frame['unique_ips'] = []
-            frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
+            frame_data['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         num_items = len(frame['unique_ips']) if frame_key == 'frame1' else len(frame['unique_dstports'])
         print(f"Number of unique {'IPs' if frame_key == 'frame1' else 'dstports'} for {date_str} in {frame_key}: {num_items}")
     else:
@@ -100,7 +157,7 @@ def update_frame_data(frame_key, date_str, query_template):
         canvas.draw()
     elif frame_key == 'frame2':
         port_combo['values'] = frame['unique_dstports']
-        port_combo.set("Select dstport" if frame['unique_dstports'] else "No dstports available")
+        port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
         ax_bar.clear()
         canvas_bar.draw()
 
@@ -113,7 +170,9 @@ root.geometry("800x600")
 today = datetime.today()
 max_date = today
 min_date = today - timedelta(days=10)
-calendar_label_frame1 = f"Select Date ({min_date.strftime('%B %d, %Y')} to {max_date.strftime('%B %d, %Y')})"
+min_date_str = min_date.strftime('%B %d, %Y')
+max_date_str = max_date.strftime('%B %d, %Y')
+calendar_label_frame1 = f"Select Date ({min_date_str} to {max_date_str})"
 
 # Create date entry widget for first frame
 tk.Label(root, text=calendar_label_frame1, font=("Arial", 12, "bold")).pack(pady=10)
@@ -130,7 +189,7 @@ def on_date_submit_frame1():
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
-        selected_date = datetime.strptime(date_str, "%Y-%m-%d")  # Corrected format
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d")  
         date_str_ymd = selected_date.strftime("%Y%m%d")
         print(f"Converted to YYYYMMDD (Frame 1): {date_str_ymd}")
         if selected_date < min_date:
@@ -163,11 +222,16 @@ def update_plot(event):
     ax.clear()
     selected_ip = combo.get()
     if selected_ip and selected_ip != "Select an IP" and frame_data['frame1']['dst_counts'] is not None:
+        # Fetch and insert IP info
+        insert_ip_info(selected_ip, 0, get_domain_name(selected_ip))
+        # Update scatter plot
         filtered_data = frame_data['frame1']['dst_counts'][frame_data['frame1']['dst_counts']['dst'] == selected_ip]
         ax.scatter(filtered_data['dstport'], filtered_data['count'], s=100)
         ax.set_xlabel('Destination Port (dstport)')
         ax.set_ylabel('Count')
         ax.set_title(f'Count vs dstport for IP: {selected_ip} (Frame 1)')
+        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
         ax.tick_params(axis='x', rotation=45)
         fig.tight_layout()
     canvas.draw()
@@ -183,7 +247,9 @@ second_window.geometry("800x600")
 # Define dynamic date range for second frame
 min_date_frame2 = min_date
 max_date_frame2 = max_date
-calendar_label_frame2 = f"Select Date ({min_date_frame2.strftime('%B %d, %Y')} to {max_date_frame2.strftime('%B %d, %Y')})"
+min_date_str_frame2 = min_date_frame2.strftime('%B %d, %Y')
+max_date_str_frame2 = max_date_frame2.strftime('%B %d, %Y')
+calendar_label_frame2 = f"Select Date ({min_date_str_frame2} to {max_date_str_frame2})"
 
 # Create date entry widget for second frame
 tk.Label(second_window, text=calendar_label_frame2, font=("Arial", 12, "bold")).pack(pady=10)
@@ -200,7 +266,7 @@ def on_date_submit_frame2():
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
-        selected_date = datetime.strptime(date_str, "%Y-%m-%d")  # Corrected format
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d")
         date_str_ymd = selected_date.strftime("%Y%m%d")
         print(f"Converted to YYYYMMDD (Frame 2): {date_str_ymd}")
         if selected_date < min_date_frame2:
@@ -210,7 +276,7 @@ def on_date_submit_frame2():
             messagebox.showerror("Invalid Date", f"Selected date is after {max_date_frame2.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
         fetch_data_frame2(date_str_ymd)
-        update_bar_chart()  # Update bar chart after fetching data
+        update_bar_chart()
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 2). Error: {e}")
         return
@@ -228,21 +294,20 @@ fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
 canvas_bar = FigureCanvasTkAgg(fig_bar, master=second_window)
 canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
-# Function to update bar chart
+# Function to update bar chart and insert top 20 IPs
 def update_bar_chart(event=None):
     if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
         selected_port = port_combo.get()
         print(f"Updating bar chart for dstport: {selected_port}")
-
-        # Filter data based on selected dstport
         filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
-        
-        # Get the top 20 IPs that hit this port (sorted by the count)
         top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count')
-        top_20_ips = top_20_ips.reset_index()  # Ensure 'dst' is a column, not index
+        top_20_ips = top_20_ips.reset_index()
         top_20_ips['domain'] = top_20_ips['dst'].apply(get_domain_name)
-        
         print(f"Filtered data for dstport {selected_port}:\n{top_20_ips.head()}")
+        
+        # Insert top 20 IPs into LOG_DNS
+        for index, row in top_20_ips.iterrows():
+            insert_ip_info(row['dst'], row['count'], row['domain'])
         
         if not top_20_ips.empty:
             ax_bar.clear()
@@ -250,7 +315,7 @@ def update_bar_chart(event=None):
             ax_bar.set_xlabel('Destination Domain')
             ax_bar.set_ylabel('Count of Hits')
             ax_bar.set_title(f'Top 20 Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
-            ax_bar.tick_params(axis='x', rotation=45)
+            ax_bar.tick_params(axis='x', rotation=80)
             fig_bar.tight_layout()
             canvas_bar.draw()
         else:
