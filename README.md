@@ -1,21 +1,27 @@
-# Network Traffic Analysis Visualization
+# 🔍 Network Traffic Analysis & Visualization Tool
 
-## Overview
-The "Network Traffic Analysis Visualization" is a Python-based application designed to visualize network traffic data from MySQL logs. Users can select a specific date and view network traffic details, including destination IPs and ports. The data is visualized using scatter plots, which help in identifying trends and patterns in network traffic.
+An interactive Python application to **analyze and visualize network log data** using a GUI. It connects to a MySQL database, fetches real-time server log data, resolves IPs to domain names, and displays insightful visualizations for threat monitoring and anomaly detection.
 
-This tool is beneficial for network administrators and security analysts to understand traffic patterns and troubleshoot network-related issues.
+## 💡 Features
 
-## Features
-- **Calendar Interface**: Select a date from the calendar widget to retrieve traffic data for that specific day.
-- **Dynamic IP Dropdown**: Choose a destination IP address from a dropdown to view the corresponding traffic data.
-- **Scatter Plot**: The relationship between destination ports and traffic counts is displayed using scatter plots, making it easier to spot trends.
+- 📅 Dynamic date range selection (past 10 days)
+- 📊 Real-time **scatter and bar charts** for destination IPs and ports
+- 🌐 IP-to-domain resolution using `socket` and `ipinfo.io` API
+- 🛡️ Filters out invalid ports and highlights high-frequency traffic
+- 💾 Stores enriched IP info (ASN, country, etc.) into `LOG_DNS` table
+- 🧠 Supports deep analysis of port-wise domain traffic patterns
 
-## Requirements
-- Python 
-- MySQL Server (for database connectivity)
-- Required Python Libraries:
-  - `pandas`
-  - `mysql-connector-python`
-  - `tkinter`
-  - `matplotlib`
-  - `tkcalendar`
+
+## ⚙️ Tech Stack
+
+- `Python`
+- `Tkinter` – for GUI
+- `Matplotlib` – for data visualization
+- `MySQL` – for log data storage
+- `pandas` – for data wrangling
+- `socket`, `requests` – for DNS and API queries
+
+## 📁 Database Requirements
+
+- MySQL table format: `log_YYYYMMDD`
+- Table: `LOG_DNS` for enriched IP info storage
