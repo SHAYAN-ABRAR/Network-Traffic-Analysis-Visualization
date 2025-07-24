@@ -163,7 +163,7 @@ max_date_str = max_date.strftime('%B %d, %Y')
 calendar_label_frame1 = f"Select Date ({min_date_str} to {max_date_str})"
 
 # Create date entry widget for first frame
-tk.Label(root, text=calendar_label_frame1, font=("Arial", 12, "bold")).pack(pady=10)
+tk.Label(root, text=calendar_label_frame1, font=("Times New Roman", 12, "bold")).pack(pady=10)
 date_entry_frame1 = DateEntry(root, width=30, date_pattern="yyyy-mm-dd",
                               mindate=min_date, maxdate=max_date,
                               year=today.year, month=today.month, day=today.day)
@@ -192,7 +192,7 @@ def on_date_submit_frame1():
 tk.Button(root, text="Get Date (Frame 1)", command=on_date_submit_frame1).pack(pady=10)
 
 # Create dropdown (Combobox) for first frame
-tk.Label(root, text="Select Destination IP:", font=("Arial", 12)).pack(pady=10)
+tk.Label(root, text="Select Destination IP:", font=("Times New Roman", 12)).pack(pady=10)
 combo = ttk.Combobox(root, values=frame_data['frame1']['unique_ips'], state='readonly', width=30)
 combo.pack(pady=5)
 combo.set("Select an IP")
@@ -233,14 +233,25 @@ min_date_str_frame2 = min_date_frame2.strftime('%B %d, %Y')
 max_date_str_frame2 = max_date_frame2.strftime('%B %d, %Y')
 calendar_label_frame2 = f"Select Date ({min_date_str_frame2} to {max_date_str_frame2})"
 
-# Create date entry widget for second frame
-tk.Label(second_window, text=calendar_label_frame2, font=("Arial", 12, "bold")).pack(pady=10)
-date_entry_frame2 = DateEntry(second_window, width=30, date_pattern="yyyy-mm-dd",
+# Create frame to hold both plots side by side
+plot_frame = tk.Frame(second_window)
+plot_frame.pack(pady=10, fill="both", expand=True)
+
+# Create subframes for bar plot and pie chart
+bar_frame = tk.Frame(plot_frame)
+bar_frame.pack(side=tk.LEFT, padx=10, fill="both", expand=True)
+
+pie_frame = tk.Frame(plot_frame)
+pie_frame.pack(side=tk.RIGHT, padx=10, fill="both", expand=True)
+
+# Create date entry widget for second frame (above bar plot)
+tk.Label(bar_frame, text=calendar_label_frame2, font=("Times New Roman", 12, "bold")).pack(pady=5)
+date_entry_frame2 = DateEntry(bar_frame, width=30, date_pattern="yyyy-mm-dd",
                               mindate=min_date_frame2, maxdate=max_date_frame2,
                               year=today.year, month=today.month, day=today.day)
 date_entry_frame2.pack(pady=5)
 
-# Button to fetch data for second frame
+# Button to fetch data for second frame (above bar plot)
 def on_date_submit_frame2():
     date_str = date_entry_frame2.get().strip()
     if not date_str:
@@ -261,26 +272,22 @@ def on_date_submit_frame2():
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 2). Error: {e}")
 
-tk.Button(second_window, text="Get Date", command=on_date_submit_frame2).pack(pady=10)
+tk.Button(bar_frame, text="Get Date", command=on_date_submit_frame2).pack(pady=5)
 
-# Create dropdown (Combobox) for second frame
-tk.Label(second_window, text="Select dstport:", font=("Arial", 12)).pack(pady=10)
-port_combo = ttk.Combobox(second_window, values=frame_data['frame2']['unique_dstports'], state='readonly', width=30)
+# Create dropdown (Combobox) for second frame (above pie chart)
+tk.Label(pie_frame, text="Select dstport:", font=("Times New Roman", 12)).pack(pady=5)
+port_combo = ttk.Combobox(pie_frame, values=frame_data['frame2']['unique_dstports'], state='readonly', width=30)
 port_combo.pack(pady=5)
 port_combo.set("Select dstport")
 
-# Create frame to hold both plots side by side
-plot_frame = tk.Frame(second_window)
-plot_frame.pack(pady=10, fill="both", expand=True)
-
 # Create Matplotlib figures for bar plot and pie chart
 fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
-canvas_bar = FigureCanvasTkAgg(fig_bar, master=plot_frame)
-canvas_bar.get_tk_widget().pack(side=tk.LEFT, padx=10, fill="both", expand=True)
+canvas_bar = FigureCanvasTkAgg(fig_bar, master=bar_frame)
+canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
 fig_pie, ax_pie = plt.subplots(figsize=(6, 4))
-canvas_pie = FigureCanvasTkAgg(fig_pie, master=plot_frame)
-canvas_pie.get_tk_widget().pack(side=tk.RIGHT, padx=10, fill="both", expand=True)
+canvas_pie = FigureCanvasTkAgg(fig_pie, master=pie_frame)
+canvas_pie.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
 # Function to update both bar plot and pie chart
 def update_plots(event=None):
