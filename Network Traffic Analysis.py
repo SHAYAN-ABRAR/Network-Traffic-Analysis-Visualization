@@ -17,9 +17,9 @@ def get_domain_name(ip_address):
         hostname = socket.gethostbyaddr(ip_address)[0]
         return hostname
     except (socket.herror, OSError):
-        return ip_address  # Fallback to IP if resolution fails
+        return ip_address
 
-# Function to fetch IP info from ipinfo.io API and insert into LOG_DNS
+# Function to fetch IP info from ipinfo.io API and insert into LOG_DNS if not exists
 def insert_ip_info(ip_address, count, domain):
     start_time = time.time()
     try:
@@ -38,14 +38,10 @@ def insert_ip_info(ip_address, count, domain):
         continent = data.get('continent', 'N/A')
         
         execution_time_ms = int((time.time() - start_time) * 1000)
-        unique_id = int(time.time() * 1000000)  # Unique ID based on timestamp with microseconds
+        unique_id = int(time.time() * 1000000)
         
         if not domain or domain == ip_address:
             domain = as_domain if as_domain and as_domain != 'N/A' else get_domain_name(ip_address)
-        print(f"IP Info for {ip_address}: IP: {ip}, Count: {count}, Domain: {domain}")
-        print(f"ASN: {asn}, AS Name: {as_name}, AS Domain: {as_domain}")
-        print(f"Country Code: {country_code}, Country: {country}, Continent Code: {continent_code}, Continent: {continent}")
-        print(f"Execution Time (ms): {execution_time_ms}")
         
         try:
             with mysql.connector.connect(
@@ -63,9 +59,6 @@ def insert_ip_info(ip_address, count, domain):
                     """
                     cursor.execute(insert_query, (unique_id, ip, asn, as_name, domain, country_code, country, continent_code, continent))
                     engine.commit()
-                    print(f"Successfully inserted IP info for {ip_address} into LOG_DNS")
-                else:
-                    print(f"IP {ip_address} already exists in LOG_DNS, skipping insertion")
         except mysql.connector.Error as e:
             print(f"Error inserting IP info for {ip_address} into LOG_DNS: {e}")
         
@@ -104,8 +97,6 @@ def fetch_data_frame2(date_str):
             frame_data['frame2']['dst_counts'] = df
             frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique())
         
-        print(f"Debug: Frame 2 dst_counts shape: {df.shape}, columns: {df.columns.tolist()}")
-        
         port_combo['values'] = frame_data['frame2']['unique_dstports']
         port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
         
@@ -130,7 +121,6 @@ def update_frame_data(frame_key, date_str, query_template):
                 frame['dst_counts'] = df.groupby(['dst', 'dstport']).size().reset_index(name='count')
             else:
                 frame['dst_counts'] = df
-        print(f"Debug: {frame_key} dst_counts shape: {frame['dst_counts'].shape}, columns: {frame['dst_counts'].columns.tolist()}, data: {frame['dst_counts'].head()}")
     except Exception as e:
         messagebox.showerror("Database Error", f"Database connection lost or table not found for {date_str}: {e}")
         frame['dst_counts'] = None
@@ -143,13 +133,10 @@ def update_frame_data(frame_key, date_str, query_template):
             frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
         else:
             frame['unique_ips'] = []
-            frame['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
-        num_items = len(frame['unique_ips']) if frame_key == 'frame1' else len(frame['unique_dstports'])
-        print(f"Number of unique {'IPs' if frame_key == 'frame1' else 'dstports'} for {date_str} in {frame_key}: {num_items}")
+            frame_data['frame2']['unique_dstports'] = sorted(frame['dst_counts']['dstport'].unique())
     else:
         frame['unique_ips'] = []
         frame['unique_dstports'] = []
-        print(f"No data available for {date_str} in {frame_key}")
     
     if frame_key == 'frame1':
         combo['values'] = frame['unique_ips']
@@ -185,14 +172,12 @@ date_entry_frame1.pack(pady=5)
 # Button to fetch data for first frame
 def on_date_submit_frame1():
     date_str = date_entry_frame1.get().strip()
-    print(f"Attempting to process date from DateEntry (Frame 1): '{date_str}'")
     if not date_str:
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
         selected_date = datetime.strptime(date_str, "%Y-%m-%d")  
         date_str_ymd = selected_date.strftime("%Y%m%d")
-        print(f"Converted to YYYYMMDD (Frame 1): {date_str_ymd}")
         if selected_date < min_date:
             messagebox.showerror("Invalid Date", f"Selected date is before {min_date.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
@@ -200,10 +185,9 @@ def on_date_submit_frame1():
             messagebox.showerror("Invalid Date", f"Selected date is after {max_date.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
         fetch_data_frame1(date_str_ymd)
-        update_plot(None)  # Update scatter plot with new data
+        update_plot(None)
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 1). Error: {e}")
-        return
 
 tk.Button(root, text="Get Date (Frame 1)", command=on_date_submit_frame1).pack(pady=10)
 
@@ -223,9 +207,7 @@ def update_plot(event):
     ax.clear()
     selected_ip = combo.get()
     if selected_ip and selected_ip != "Select an IP" and frame_data['frame1']['dst_counts'] is not None:
-        # Fetch and insert IP info
         insert_ip_info(selected_ip, 0, get_domain_name(selected_ip))
-        # Update scatter plot
         filtered_data = frame_data['frame1']['dst_counts'][frame_data['frame1']['dst_counts']['dst'] == selected_ip]
         ax.scatter(filtered_data['dstport'], filtered_data['count'], s=100)
         ax.set_xlabel('Destination Port (dstport)')
@@ -237,13 +219,12 @@ def update_plot(event):
         fig.tight_layout()
     canvas.draw()
 
-# Bind dropdown selection to update_plot
 combo.bind("<<ComboboxSelected>>", update_plot)
 
 # Create second frame (Toplevel window)
 second_window = tk.Toplevel(root)
 second_window.title("Port vs Domain Count")
-second_window.geometry("800x600")
+second_window.geometry("1200x600")  # Increased width to accommodate two plots
 
 # Define dynamic date range for second frame
 min_date_frame2 = min_date
@@ -262,14 +243,12 @@ date_entry_frame2.pack(pady=5)
 # Button to fetch data for second frame
 def on_date_submit_frame2():
     date_str = date_entry_frame2.get().strip()
-    print(f"Attempting to process date from DateEntry (Frame 2): '{date_str}'")
     if not date_str:
         messagebox.showerror("Invalid Date", "Please select a date from the calendar first.")
         return
     try:
         selected_date = datetime.strptime(date_str, "%Y-%m-%d")
         date_str_ymd = selected_date.strftime("%Y%m%d")
-        print(f"Converted to YYYYMMDD (Frame 2): {date_str_ymd}")
         if selected_date < min_date_frame2:
             messagebox.showerror("Invalid Date", f"Selected date is before {min_date_frame2.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
@@ -277,10 +256,10 @@ def on_date_submit_frame2():
             messagebox.showerror("Invalid Date", f"Selected date is after {max_date_frame2.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
         fetch_data_frame2(date_str_ymd)
-        update_bar_chart()
+        port_combo.set("Select dstport")  # Reset dstport selection
+        update_plots()  # Update both bar and pie charts
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 2). Error: {e}")
-        return
 
 tk.Button(second_window, text="Get Date", command=on_date_submit_frame2).pack(pady=10)
 
@@ -290,81 +269,111 @@ port_combo = ttk.Combobox(second_window, values=frame_data['frame2']['unique_dst
 port_combo.pack(pady=5)
 port_combo.set("Select dstport")
 
-# Create Matplotlib figure for pie chart
-fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
-canvas_bar = FigureCanvasTkAgg(fig_bar, master=second_window)
-canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
+# Create frame to hold both plots side by side
+plot_frame = tk.Frame(second_window)
+plot_frame.pack(pady=10, fill="both", expand=True)
 
-# Function to update pie chart and insert top 20 IPs
-def update_bar_chart(event=None):
+# Create Matplotlib figures for bar plot and pie chart
+fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
+canvas_bar = FigureCanvasTkAgg(fig_bar, master=plot_frame)
+canvas_bar.get_tk_widget().pack(side=tk.LEFT, padx=10, fill="both", expand=True)
+
+fig_pie, ax_pie = plt.subplots(figsize=(6, 4))
+canvas_pie = FigureCanvasTkAgg(fig_pie, master=plot_frame)
+canvas_pie.get_tk_widget().pack(side=tk.RIGHT, padx=10, fill="both", expand=True)
+
+# Function to update both bar plot and pie chart
+def update_plots(event=None):
+    # Update bar plot (always show top 20 dstports for the selected date)
+    ax_bar.clear()
+    if frame_data['frame2']['dst_counts'] is not None:
+        top_20 = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+        if not top_20.empty:
+            ax_bar.bar(top_20.index, top_20['count'], color='purple')
+            ax_bar.set_xlabel('Destination Port (dstport)')
+            ax_bar.set_ylabel('Count of Hits')
+            ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
+            ax_bar.tick_params(axis='x', rotation=45)
+        else:
+            ax_bar.text(0.5, 0.5, 'No data available for bar chart', horizontalalignment='center', verticalalignment='center')
+    else:
+        ax_bar.text(0.5, 0.5, 'No data available for bar chart', horizontalalignment='center', verticalalignment='center')
+    fig_bar.tight_layout()
+    canvas_bar.draw()
+
+    # Update pie chart (show domain distribution for selected dstport or nothing)
+    ax_pie.clear()
     if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
         selected_port = port_combo.get()
-        print(f"Updating pie chart for dstport: {selected_port}")
         filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
         top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count')
         top_20_ips = top_20_ips.reset_index()
-        # 1.0 top_20_ips contains ['dstport', 'dst', 'count'] use only dst (contains IP's) column
-        # 1.1 ** change to array of dst if required . Lt it be called "ipFromDf"
-
-        # 2. Execute query using the above IP list (1.0)/array (1.1)
-        # 2.1 eg: resultList = SELECT ip FROM `LOG_DNS` where ip in ipFromDf (1.1)
-
-        # 3. Keep only the unique ip's which is not in the list resultList (2.1)
-        # 3.1 : uniqueIpList = [ip for ip in ipList1 if ip not in resultList and ipList1.count(ip) == 1]
-
-        # 4. Insert the uniqueIpLis's data into "LOG_DNS" using function : insert_ip_info
-
-        # 5. Collect all the domain name for ip's in top_20_ips (already done) then plot
-
-        # Fetch domains from API and insert if new
+        
+        # Extract IPs
+        ipFromDf = [ip for ip in top_20_ips['dst'].tolist() if isinstance(ip, str) and ip]
+        
+        # Fetch domains from LOG_DNS and handle new IPs
         domains = {}
-        for index, row in top_20_ips.iterrows():
-            ip = row['dst']
-            info = insert_ip_info(ip, row['count'], ip)  # Pass IP as initial domain to trigger API fetch
-            domains[ip] = info['domain']  # Use the newly fetched domain
+        if ipFromDf:
+            try:
+                with mysql.connector.connect(
+                    host="192.168.100.25",
+                    user="sysuser",
+                    password="DT1Y9Q0EtBwI0",
+                    database="syslog"
+                ) as engine:
+                    cursor = engine.cursor()
+                    placeholders = ','.join(['%s'] * len(ipFromDf))
+                    query = f"SELECT ip, DOMAIN FROM LOG_DNS WHERE ip IN ({placeholders})"
+                    cursor.execute(query, ipFromDf)
+                    existing_domains = {row[0]: row[1] for row in cursor.fetchall()}
+                    
+                    for ip in ipFromDf:
+                        if ip in existing_domains and existing_domains[ip]:
+                            domains[ip] = existing_domains[ip]
+                        else:
+                            info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
+                            domains[ip] = info['domain']
+            except mysql.connector.Error as e:
+                print(f"Error querying LOG_DNS: {e}")
+                for ip in ipFromDf:
+                    info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
+                    domains[ip] = info['domain']
+        else:
+            print("No valid IPs found in top_20_ips, skipping database query.")
+            for ip in top_20_ips['dst']:
+                info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
+                domains[ip] = info['domain']
         
         # Aggregate counts by domain
         domain_counts = {}
         for ip, domain in domains.items():
-            if domain in domain_counts:
-                domain_counts[domain] += top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
-            else:
-                domain_counts[domain] = top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
+            if domain:  # Only include if domain is not empty
+                count = top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
+                domain_counts[domain] = domain_counts.get(domain, 0) + count
         
         if domain_counts:
-            ax_bar.clear()
             labels = list(domain_counts.keys())
             sizes = list(domain_counts.values())
             total = sum(sizes)
             percentages = [size / total * 100 for size in sizes]
-            ax_bar.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=60)
-            ax_bar.axis('equal')  # Equal aspect ratio ensures pie is drawn as a circle
-            ax_bar.set_title(f'Percentage of Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
-            fig_bar.tight_layout()
-            canvas_bar.draw()
+            ax_pie.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=60)
+            ax_pie.axis('equal')
+            ax_pie.set_title(f'Percentage of Domain Hits for dstport {selected_port} on {date_entry_frame2.get()}')
         else:
-            print("Warning: No data for selected dstport, pie chart not updated.")
-            ax_bar.clear()
-            canvas_bar.draw()
-    elif frame_data['frame2']['dst_counts'] is not None and port_combo.get() == "Select dstport":
-        print(f"Updating bar chart with default top 20 dstport counts: {frame_data['frame2']['dst_counts'].head()}")
-        ax_bar.clear()
-        top_20 = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
-        ax_bar.bar(top_20.index, top_20['count'], color='purple')
-        ax_bar.set_xlabel('Destination Port (dstport)')
-        ax_bar.set_ylabel('Count of Hits')
-        ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
-        ax_bar.tick_params(axis='x', rotation=45)
-        fig_bar.tight_layout()
-        canvas_bar.draw()
+            ax_pie.text(0.5, 0.5, 'No valid domain data available', horizontalalignment='center', verticalalignment='center')
+    else:
+        ax_pie.text(0.5, 0.5, 'Please Select a port first, to see its PieChart', horizontalalignment='center', verticalalignment='center')
+    
+    fig_pie.tight_layout()
+    canvas_pie.draw()
 
-# Bind dropdown selection to update_bar_chart
-port_combo.bind("<<ComboboxSelected>>", update_bar_chart)
+port_combo.bind("<<ComboboxSelected>>", update_plots)
 
 # Fetch initial data for today's date in both frames and update charts
 fetch_data_frame1(today.strftime("%Y%m%d"))
 update_plot(None)
 fetch_data_frame2(today.strftime("%Y%m%d"))
-update_bar_chart()
+update_plots()
 
 root.mainloop()
