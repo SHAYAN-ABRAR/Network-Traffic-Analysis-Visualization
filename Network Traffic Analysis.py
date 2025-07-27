@@ -149,8 +149,38 @@ def update_frame_data(frame_key, date_str, query_template):
         ax_bar.clear()
         canvas_bar.draw()
 
-# Function to insert data into PLOT_DATA
-def insert_plot_data(date_str, selected_port):
+# Function to insert data into PLOT_DATA for top 20 ports
+def insert_top_20_ports(date_str):
+    try:
+        with mysql.connector.connect(
+            host="192.168.100.25",
+            user="sysuser",
+            password="DT1Y9Q0EtBwI0",
+            database="syslog"
+        ) as engine:
+            cursor = engine.cursor()
+            counter = 0  # Counter to ensure unique IDs within the same microsecond
+            
+            if frame_data['frame2']['dst_counts'] is not None:
+                top_20_ports = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+                for port, row in top_20_ports.iterrows():
+                    unique_id = int(time.time() * 1000000) + counter
+                    counter += 1
+                    log_id = f"log_{date_str}"
+                    cursor.execute(
+                        """
+                        INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (unique_id, log_id, "PORT", "N/A", str(port), str(row['count']))
+                    )
+            
+            engine.commit()
+    except mysql.connector.Error as e:
+        print(f"Error inserting top 20 ports into PLOT_DATA: {e}")
+
+# Function to insert data into PLOT_DATA for a specific port
+def insert_specific_port_data(date_str, selected_port):
     try:
         with mysql.connector.connect(
             host="192.168.100.25",
@@ -195,12 +225,12 @@ def insert_plot_data(date_str, selected_port):
                         INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
                         VALUES (%s, %s, %s, %s, %s, %s)
                         """,
-                        (unique_id, log_id, "PORT", domain, selected_port, str(count))
+                        (unique_id, log_id, "DOMAIN", domain, selected_port, str(count))
                     )
             
             engine.commit()
     except mysql.connector.Error as e:
-        print(f"Error inserting into PLOT_DATA: {e}")
+        print(f"Error inserting specific port data into PLOT_DATA: {e}")
 
 # Create main Tkinter window (first frame)
 root = tk.Tk()
@@ -323,6 +353,7 @@ def on_date_submit_frame2():
         fetch_data_frame2(date_str_ymd)
         port_combo.set("Select dstport")
         update_plots()
+        insert_top_20_ports(date_str_ymd)  # Insert top 20 ports on date selection
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 2). Error: {e}")
 
@@ -420,10 +451,10 @@ def update_plots(event=None):
     fig_pie.tight_layout()
     canvas_pie.draw()
     
-    # Insert data into PLOT_DATA only when a port is selected
+    # Insert specific port data only when a port is selected
     if port_combo.get() != "Select dstport" and date_entry_frame2.get().strip():
         date_str = date_entry_frame2.get().replace("-", "")
-        insert_plot_data(date_str, port_combo.get())
+        insert_specific_port_data(date_str, port_combo.get())
 
 port_combo.bind("<<ComboboxSelected>>", update_plots)
 
