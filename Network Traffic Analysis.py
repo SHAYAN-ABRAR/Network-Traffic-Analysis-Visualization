@@ -1,3 +1,4 @@
+
 import pandas as pd
 import mysql.connector
 import tkinter as tk
@@ -163,17 +164,26 @@ def insert_top_20_ports(date_str):
             
             if frame_data['frame2']['dst_counts'] is not None:
                 top_20_ports = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+                log_id = f"log_{date_str}"
+                
+                # Check existing ports for the given LOG_ID
+                cursor.execute(
+                    "SELECT PORT FROM PLOT_DATA WHERE LOG_ID = %s AND LOG_TYPE = %s",
+                    (log_id, "PORT")
+                )
+                existing_ports = {row[0] for row in cursor.fetchall()}
+                
                 for port, row in top_20_ports.iterrows():
-                    unique_id = int(time.time() * 1000000) + counter
-                    counter += 1
-                    log_id = f"log_{date_str}"
-                    cursor.execute(
-                        """
-                        INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (unique_id, log_id, "PORT", "N/A", str(port), str(row['count']))
-                    )
+                    if str(port) not in existing_ports:  # Only insert if port doesn't exist for this LOG_ID
+                        unique_id = int(time.time() * 1000000) + counter
+                        counter += 1
+                        cursor.execute(
+                            """
+                            INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (unique_id, log_id, "PORT", "N/A", str(port), str(row['count']))
+                        )
             
             engine.commit()
     except mysql.connector.Error as e:
@@ -195,21 +205,29 @@ def insert_specific_port_data(date_str, selected_port):
                 filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
                 top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count').reset_index()
                 ip_from_df = [ip for ip in top_20_ips['dst'].tolist() if isinstance(ip, str) and ip]
+                log_id = f"log_{date_str}"
                 
-                # Fetch domains
+                # Fetch existing domains for the given LOG_ID and PORT
+                cursor.execute(
+                    "SELECT DOMAIN FROM PLOT_DATA WHERE LOG_ID = %s AND PORT = %s AND LOG_TYPE = %s",
+                    (log_id, selected_port, "DOMAIN")
+                )
+                existing_domains = {row[0] for row in cursor.fetchall()}
+                
+                # Fetch domains for IPs
                 domains = {}
                 if ip_from_df:
                     placeholders = ','.join(['%s'] * len(ip_from_df))
                     cursor.execute(f"SELECT ip, DOMAIN FROM LOG_DNS WHERE ip IN ({placeholders})", ip_from_df)
-                    existing_domains = {row[0]: row[1] for row in cursor.fetchall()}
+                    existing_ip_domains = {row[0]: row[1] for row in cursor.fetchall()}
                     for ip in ip_from_df:
-                        if ip in existing_domains and existing_domains[ip]:
-                            domains[ip] = existing_domains[ip]
+                        if ip in existing_ip_domains and existing_ip_domains[ip]:
+                            domains[ip] = existing_ip_domains[ip]
                         else:
                             info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
                             domains[ip] = info['domain']
                 
-                # Aggregate counts by domain and insert
+                # Aggregate counts by domain and insert only non-existing domains
                 domain_counts = {}
                 for ip, domain in domains.items():
                     if domain:
@@ -217,16 +235,16 @@ def insert_specific_port_data(date_str, selected_port):
                         domain_counts[domain] = domain_counts.get(domain, 0) + count
                 
                 for domain, count in domain_counts.items():
-                    unique_id = int(time.time() * 1000000) + counter
-                    counter += 1
-                    log_id = f"log_{date_str}"
-                    cursor.execute(
-                        """
-                        INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (unique_id, log_id, "DOMAIN", domain, selected_port, str(count))
-                    )
+                    if domain not in existing_domains:  # Only insert if domain doesn't exist for this LOG_ID and PORT
+                        unique_id = int(time.time() * 1000000) + counter
+                        counter += 1
+                        cursor.execute(
+                            """
+                            INSERT INTO PLOT_DATA (ID, LOG_ID, LOG_TYPE, DOMAIN, PORT, COUNT)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (unique_id, log_id, "DOMAIN", domain, selected_port, str(count))
+                        )
             
             engine.commit()
     except mysql.connector.Error as e:
