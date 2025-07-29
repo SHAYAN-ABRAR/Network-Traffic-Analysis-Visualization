@@ -10,6 +10,7 @@ import socket
 import requests
 import json
 import time
+import numpy as np
 
 # Function to resolve IP to domain name with error handling
 def get_domain_name(ip_address):
@@ -70,8 +71,41 @@ def insert_ip_info(ip_address, count, domain):
 # Global variables to store data for each frame
 frame_data = {
     'frame1': {'dst_counts': None, 'unique_ips': [], 'unique_dstports': []},
-    'frame2': {'dst_counts': None, 'unique_ips': [], 'unique_dstports': []}
+    'frame2': {'dst_counts': None, 'unique_ips': [], 'unique_dstports': [], 'full_dst_counts': None}
 }
+
+# Function to check if data exists in PLOT_DATA
+def check_plot_data(date_str, log_type, port=None):
+    try:
+        with mysql.connector.connect(
+            host="192.168.100.25",
+            user="sysuser",
+            password="DT1Y9Q0EtBwI0",
+            database="syslog"
+        ) as engine:
+            cursor = engine.cursor()
+            log_id = f"log_{date_str}"
+            if log_type == "PORT":
+                query = "SELECT PORT, COUNT FROM PLOT_DATA WHERE LOG_ID = %s AND LOG_TYPE = %s"
+                cursor.execute(query, (log_id, "PORT"))
+                results = cursor.fetchall()
+                if results:
+                    df = pd.DataFrame(results, columns=['dstport', 'count'])
+                    df['count'] = pd.to_numeric(df['count'], errors='coerce')  # Convert to numeric
+                    return df
+                return None
+            elif log_type == "DOMAIN" and port:
+                query = "SELECT DOMAIN, COUNT FROM PLOT_DATA WHERE LOG_ID = %s AND LOG_TYPE = %s AND PORT = %s"
+                cursor.execute(query, (log_id, "DOMAIN", port))
+                results = cursor.fetchall()
+                if results:
+                    df = pd.DataFrame(results, columns=['domain', 'count'])
+                    df['count'] = pd.to_numeric(df['count'], errors='coerce')  # Convert to numeric
+                    return df
+                return None
+    except mysql.connector.Error as e:
+        print(f"Error checking PLOT_DATA for {date_str}: {e}")
+        return None
 
 # Function to fetch data for the first frame
 def fetch_data_frame1(date_str):
@@ -94,8 +128,13 @@ def fetch_data_frame2(date_str):
                 ORDER BY dstport, count DESC
             """
             df = pd.read_sql(query, engine)
+            if df.empty:
+                print(f"No data found in log_{date_str}")
+            else:
+                df['count'] = pd.to_numeric(df['count'], errors='coerce')  # Ensure count is numeric
             frame_data['frame2']['dst_counts'] = df
-            frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique())
+            frame_data['frame2']['full_dst_counts'] = df.copy()  # Store full data for dropdown
+            frame_data['frame2']['unique_dstports'] = sorted(df['dstport'].unique()) if not df.empty else []
         
         port_combo['values'] = frame_data['frame2']['unique_dstports']
         port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
@@ -103,6 +142,7 @@ def fetch_data_frame2(date_str):
     except Exception as e:
         messagebox.showerror("Database Error", f"Error fetching data for {date_str}: {e}")
         frame_data['frame2']['dst_counts'] = None
+        frame_data['frame2']['full_dst_counts'] = None
         frame_data['frame2']['unique_dstports'] = []
 
 # Helper function to update frame data
@@ -118,6 +158,7 @@ def update_frame_data(frame_key, date_str, query_template):
             query = query_template.format(date_str=date_str)
             df = pd.read_sql(query, engine)
             if frame_key == 'frame1':
+                df['count'] = pd.to_numeric(df.groupby(['dst', 'dstport']).size(), errors='coerce').reset_index(name='count')['count']
                 frame['dst_counts'] = df.groupby(['dst', 'dstport']).size().reset_index(name='count')
             else:
                 frame['dst_counts'] = df
@@ -163,8 +204,8 @@ def insert_top_20_ports(date_str):
             today_str = datetime.today().strftime("%Y%m%d")
             log_id = f"log_{date_str}"
 
-            if frame_data['frame2']['dst_counts'] is not None:
-                top_20_ports = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+            if frame_data['frame2']['full_dst_counts'] is not None:  # Use full data for insertion
+                top_20_ports = frame_data['frame2']['full_dst_counts'].groupby('dstport')['count'].sum().nlargest(20)
 
                 # Check existing ports for the given LOG_ID
                 cursor.execute(
@@ -173,9 +214,9 @@ def insert_top_20_ports(date_str):
                 )
                 existing_ports = {row[0]: {'count': row[1], 'id': row[2]} for row in cursor.fetchall()}
 
-                for port, row in top_20_ports.iterrows():
+                for port, count in top_20_ports.items():
                     port_str = str(port)
-                    count_str = str(row['count'])
+                    count_str = str(int(count))  # Convert to int to ensure no decimals, then to string for SQL
                     if port_str in existing_ports:
                         if date_str == today_str:  # Update only for today's date
                             update_query = """
@@ -211,9 +252,9 @@ def insert_specific_port_data(date_str, selected_port):
             today_str = datetime.today().strftime("%Y%m%d")
             log_id = f"log_{date_str}"
 
-            if frame_data['frame2']['dst_counts'] is not None:
-                filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
-                top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count').reset_index()
+            if frame_data['frame2']['full_dst_counts'] is not None and 'dst' in frame_data['frame2']['full_dst_counts'].columns:
+                filtered_data = frame_data['frame2']['full_dst_counts'][frame_data['frame2']['full_dst_counts']['dstport'] == selected_port]
+                top_20_ips = filtered_data.groupby('dst')['count'].sum().nlargest(20).reset_index()
                 ip_from_df = [ip for ip in top_20_ips['dst'].tolist() if isinstance(ip, str) and ip]
 
                 # Fetch domains for IPs
@@ -245,7 +286,7 @@ def insert_specific_port_data(date_str, selected_port):
 
                 # Insert or update domain data
                 for domain, count in domain_counts.items():
-                    count_str = str(count)
+                    count_str = str(int(count))  # Convert to int to ensure no decimals, then to string for SQL
                     if domain in existing_domains:
                         if date_str == today_str:  # Update only for today's date
                             update_query = """
@@ -385,10 +426,28 @@ def on_date_submit_frame2():
         if selected_date > max_date:
             messagebox.showerror("Invalid Date", f"Selected date is after {max_date.strftime('%B %d, %Y')}. Please choose a date within the last 10 days.")
             return
-        fetch_data_frame2(date_str_ymd)
+        
+        # Check PLOT_DATA for port data
+        port_data = check_plot_data(date_str_ymd, "PORT")
+        today_str = datetime.today().strftime("%Y%m%d")
+        
+        if port_data is not None and date_str_ymd != today_str:
+            print(f"Data is already in PLOT_DATA for {date_str_ymd}, fetching from PLOT_DATA")
+            frame_data['frame2']['dst_counts'] = port_data
+            # Use full_dst_counts for dropdown if available
+            if frame_data['frame2']['full_dst_counts'] is not None:
+                frame_data['frame2']['unique_dstports'] = sorted(frame_data['frame2']['full_dst_counts']['dstport'].unique())
+            else:
+                frame_data['frame2']['unique_dstports'] = sorted(port_data['dstport'].unique())
+            port_combo['values'] = frame_data['frame2']['unique_dstports']
+            port_combo.set("Select dstport" if frame_data['frame2']['unique_dstports'] else "No dstports available")
+        else:
+            print(f"The required data is not in PLOT_DATA for {date_str_ymd}, fetching from log_{date_str_ymd}")
+            fetch_data_frame2(date_str_ymd)
+            insert_top_20_ports(date_str_ymd)  # Insert or update top 20 ports
+        
         port_combo.set("Select dstport")
         update_plots()
-        insert_top_20_ports(date_str_ymd)  # Insert or update top 20 ports on date selection
     except ValueError as e:
         messagebox.showerror("Invalid Date", f"Failed to process date '{date_str}' (Frame 2). Error: {e}")
 
@@ -413,9 +472,9 @@ canvas_pie.get_tk_widget().pack(pady=10, fill="both", expand=True)
 def update_plots(event=None):
     ax_bar.clear()
     if frame_data['frame2']['dst_counts'] is not None:
-        top_20 = frame_data['frame2']['dst_counts'].groupby('dstport').sum().nlargest(20, 'count')
+        top_20 = frame_data['frame2']['dst_counts'].groupby('dstport')['count'].sum().nlargest(20)
         if not top_20.empty:
-            ax_bar.bar(top_20.index, top_20['count'], color='purple')
+            ax_bar.bar(top_20.index, top_20.values, color='purple')
             ax_bar.set_xlabel('Destination Port (dstport)')
             ax_bar.set_ylabel('Count of Hits')
             ax_bar.set_title(f'Top 20 dstport Counts for {date_entry_frame2.get()}')
@@ -430,45 +489,63 @@ def update_plots(event=None):
     ax_pie.clear()
     if frame_data['frame2']['dst_counts'] is not None and port_combo.get() != "Select dstport":
         selected_port = port_combo.get()
-        filtered_data = frame_data['frame2']['dst_counts'][frame_data['frame2']['dst_counts']['dstport'] == selected_port]
-        top_20_ips = filtered_data.groupby('dst').sum().nlargest(20, 'count').reset_index()
+        date_str_ymd = date_entry_frame2.get().replace("-", "")
+        today_str = datetime.today().strftime("%Y%m%d")
         
-        ip_from_df = [ip for ip in top_20_ips['dst'].tolist() if isinstance(ip, str) and ip]
-        domains = {}
-        if ip_from_df:
-            try:
-                with mysql.connector.connect(
-                    host="192.168.100.25",
-                    user="sysuser",
-                    password="DT1Y9Q0EtBwI0",
-                    database="syslog"
-                ) as engine:
-                    cursor = engine.cursor()
-                    placeholders = ','.join(['%s'] * len(ip_from_df))
-                    query = f"SELECT ip, DOMAIN FROM LOG_DNS WHERE ip IN ({placeholders})"
-                    cursor.execute(query, ip_from_df)
-                    existing_domains = {row[0]: row[1] for row in cursor.fetchall()}
-                    for ip in ip_from_df:
-                        if ip in existing_domains and existing_domains[ip]:
-                            domains[ip] = existing_domains[ip]
-                        else:
+        # Check PLOT_DATA for domain data
+        domain_data = check_plot_data(date_str_ymd, "DOMAIN", selected_port)
+        
+        if domain_data is not None and date_str_ymd != today_str:
+            print(f"Domain data is already in PLOT_DATA for port {selected_port} on {date_str_ymd}, fetching from PLOT_DATA")
+            domain_counts = dict(zip(domain_data['domain'], domain_data['count']))
+        else:
+            print(f"Domain data is not in PLOT_DATA for port {selected_port} on {date_str_ymd}, fetching from log_{date_str_ymd}")
+            if frame_data['frame2']['full_dst_counts'] is not None and 'dst' in frame_data['frame2']['full_dst_counts'].columns:
+                filtered_data = frame_data['frame2']['full_dst_counts'][frame_data['frame2']['full_dst_counts']['dstport'] == selected_port]
+                if not filtered_data.empty:
+                    top_20_ips = filtered_data.groupby('dst')['count'].sum().nlargest(20).reset_index()
+                    ip_from_df = [ip for ip in top_20_ips['dst'].tolist() if isinstance(ip, str) and ip]
+                    domains = {}
+                    if ip_from_df:
+                        try:
+                            with mysql.connector.connect(
+                                host="192.168.100.25",
+                                user="sysuser",
+                                password="DT1Y9Q0EtBwI0",
+                                database="syslog"
+                            ) as engine:
+                                cursor = engine.cursor()
+                                placeholders = ','.join(['%s'] * len(ip_from_df))
+                                query = f"SELECT ip, DOMAIN FROM LOG_DNS WHERE ip IN ({placeholders})"
+                                cursor.execute(query, ip_from_df)
+                                existing_domains = {row[0]: row[1] for row in cursor.fetchall()}
+                                for ip in ip_from_df:
+                                    if ip in existing_domains and existing_domains[ip]:
+                                        domains[ip] = existing_domains[ip]
+                                    else:
+                                        info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
+                                        domains[ip] = info['domain']
+                        except mysql.connector.Error as e:
+                            print(f"Error querying LOG_DNS: {e}")
+                            for ip in ip_from_df:
+                                info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
+                                domains[ip] = info['domain']
+                    else:
+                        for ip in top_20_ips['dst']:
                             info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
                             domains[ip] = info['domain']
-            except mysql.connector.Error as e:
-                print(f"Error querying LOG_DNS: {e}")
-                for ip in ip_from_df:
-                    info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
-                    domains[ip] = info['domain']
-        else:
-            for ip in top_20_ips['dst']:
-                info = insert_ip_info(ip, top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0], ip)
-                domains[ip] = info['domain']
-        
-        domain_counts = {}
-        for ip, domain in domains.items():
-            if domain:
-                count = top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
-                domain_counts[domain] = domain_counts.get(domain, 0) + count
+                    
+                    domain_counts = {}
+                    for ip, domain in domains.items():
+                        if domain:
+                            count = top_20_ips[top_20_ips['dst'] == ip]['count'].iloc[0]
+                            domain_counts[domain] = domain_counts.get(domain, 0) + count
+                    # Insert or update specific port data
+                    insert_specific_port_data(date_str_ymd, selected_port)
+                else:
+                    domain_counts = {}
+            else:
+                domain_counts = {}
         
         if domain_counts:
             labels = list(domain_counts.keys())
@@ -485,11 +562,6 @@ def update_plots(event=None):
     
     fig_pie.tight_layout()
     canvas_pie.draw()
-    
-    # Insert or update specific port data only when a port is selected
-    if port_combo.get() != "Select dstport" and date_entry_frame2.get().strip():
-        date_str = date_entry_frame2.get().replace("-", "")
-        insert_specific_port_data(date_str, port_combo.get())
 
 port_combo.bind("<<ComboboxSelected>>", update_plots)
 
