@@ -203,7 +203,7 @@ def insert_specific_port_data(date_str, selected_port):
         with mysql.connector.connect(
             host="192.168.100.25",
             user="sysuser",
-            password="DT1 Preservation of Historical DataY9Q0EtBwI0",
+            password="DT1Y9Q0EtBwI0",
             database="syslog"
         ) as engine:
             cursor = engine.cursor()
