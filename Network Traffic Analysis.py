@@ -12,7 +12,7 @@ import json
 import time
 import numpy as np
 
-# Function to resolve IP to domain name with error handling
+# Tries to get the domain name (like google.com) from an IP address. If it fails, returns the IP.
 def get_domain_name(ip_address):
     try:
         hostname = socket.gethostbyaddr(ip_address)[0]
@@ -20,7 +20,8 @@ def get_domain_name(ip_address):
     except (socket.herror, OSError):
         return ip_address
 
-# Function to fetch IP info from ipinfo.io API and insert into LOG_DNS if not exists
+# Gets info about an IP (like country, provider) from an API and saves it to LOG_DNS table if not already there.
+# Uses the API to fetch details, then checks if the IP is in the database. If not, it adds the info.
 def insert_ip_info(ip_address, count, domain):
     start_time = time.time()
     try:
@@ -68,13 +69,14 @@ def insert_ip_info(ip_address, count, domain):
         print(f"Error fetching IP info for {ip_address}: {e}")
         return {'domain': ip_address, 'data': None}
 
-# Global variables to store data for each frame
+# Stores data for two windows (frames): one for IP scatter plot, one for port/domain charts.
 frame_data = {
     'frame1': {'dst_counts': None, 'unique_ips': [], 'unique_dstports': []},
     'frame2': {'dst_counts': None, 'unique_ips': [], 'unique_dstports': [], 'full_dst_counts': None}
 }
 
-# Function to check if data exists in PLOT_DATA
+# Checks if data exists in PLOT_DATA table for a date and type (port or domain).
+# Queries the table and returns a DataFrame with port or domain counts if found, else None.
 def check_plot_data(date_str, log_type, port=None):
     try:
         with mysql.connector.connect(
@@ -91,7 +93,7 @@ def check_plot_data(date_str, log_type, port=None):
                 results = cursor.fetchall()
                 if results:
                     df = pd.DataFrame(results, columns=['dstport', 'count'])
-                    df['count'] = pd.to_numeric(df['count'], errors='coerce')  # Convert to numeric
+                    df['count'] = pd.to_numeric(df['count'], errors='coerce')  # Convert to Numeric
                     return df
                 return None
             elif log_type == "DOMAIN" and port:
@@ -107,11 +109,13 @@ def check_plot_data(date_str, log_type, port=None):
         print(f"Error checking PLOT_DATA for {date_str}: {e}")
         return None
 
-# Function to fetch data for the first frame
+# Fetches data for the first window (scatter plot) from the main database.
+# Calls update_frame_data to get all data from log_{date_str} table.
 def fetch_data_frame1(date_str):
     update_frame_data('frame1', date_str, "SELECT * FROM log_{date_str}")
 
-# Function to fetch data for the second frame
+# Fetches data for the second window (bar and pie charts) from the main database.
+# Queries log_{date_str} for port and IP counts, stores them, and updates the port dropdown.
 def fetch_data_frame2(date_str):
     try:
         with mysql.connector.connect(
@@ -145,7 +149,8 @@ def fetch_data_frame2(date_str):
         frame_data['frame2']['full_dst_counts'] = None
         frame_data['frame2']['unique_dstports'] = []
 
-# Helper function to update frame data
+# Updates data for a frame (first or second window) from the database.
+# Fetches data from log_{date_str}, processes it (groups by IP/port for frame1), and updates dropdowns.
 def update_frame_data(frame_key, date_str, query_template):
     frame = frame_data[frame_key]
     try:
@@ -190,7 +195,8 @@ def update_frame_data(frame_key, date_str, query_template):
         ax_bar.clear()
         canvas_bar.draw()
 
-# Function to insert or update data into PLOT_DATA for top 20 ports
+# Saves or updates the top 20 ports and their counts in PLOT_DATA table.
+# Gets top 20 ports from frame2 data, checks if they exist in PLOT_DATA, and inserts or updates them.
 def insert_top_20_ports(date_str):
     try:
         with mysql.connector.connect(
@@ -238,7 +244,8 @@ def insert_top_20_ports(date_str):
     except mysql.connector.Error as e:
         print(f"Error inserting/updating top 20 ports into PLOT_DATA: {e}")
 
-# Function to insert or update data into PLOT_DATA for a specific port
+# Saves or updates domain counts for a specific port in PLOT_DATA table.
+# Filters IPs for the port, gets their domains, aggregates counts, and inserts or updates in PLOT_DATA.
 def insert_specific_port_data(date_str, selected_port):
     try:
         with mysql.connector.connect(
@@ -308,12 +315,12 @@ def insert_specific_port_data(date_str, selected_port):
     except mysql.connector.Error as e:
         print(f"Error inserting/updating specific port data into PLOT_DATA: {e}")
 
-# Create main Tkinter window (first frame)
+# Creates the first window for the IP scatter plot.
 root = tk.Tk()
 root.title("Destination IP Scatter Plot")
 root.geometry("800x600")
 
-# Define dynamic date range for first frame
+# Sets date range for the first window (last 10 days).
 today = datetime.today()
 max_date = today
 min_date = today - timedelta(days=10)
@@ -321,14 +328,15 @@ min_date_str = min_date.strftime('%B %d, %Y')
 max_date_str = max_date.strftime('%B %d, %Y')
 calendar_label_frame1 = f"Select Date ({min_date_str} to {max_date_str})"
 
-# Create date entry widget for first frame
+# Adds a date picker to the first window for selecting a date.
 tk.Label(root, text=calendar_label_frame1, font=("Times New Roman", 12, "bold")).pack(pady=10)
 date_entry_frame1 = DateEntry(root, width=30, date_pattern="yyyy-mm-dd",
                               mindate=min_date, maxdate=max_date,
                               year=today.year, month=today.month, day=today.day)
 date_entry_frame1.pack(pady=5)
 
-# Button to fetch data for first frame
+# Fetches data for the first window when a date is selected.
+# Checks if the date is valid, then calls fetch_data_frame1 and updates the plot.
 def on_date_submit_frame1():
     date_str = date_entry_frame1.get().strip()
     if not date_str:
@@ -350,18 +358,19 @@ def on_date_submit_frame1():
 
 tk.Button(root, text="Get Date (Frame 1)", command=on_date_submit_frame1).pack(pady=10)
 
-# Create dropdown (Combobox) for first frame
+# Adds a dropdown to select an IP in the first window.
 tk.Label(root, text="Select Destination IP:", font=("Times New Roman", 12)).pack(pady=10)
 combo = ttk.Combobox(root, values=frame_data['frame1']['unique_ips'], state='readonly', width=30)
 combo.pack(pady=5)
 combo.set("Select an IP")
 
-# Create Matplotlib figure for scatter plot
+# Sets up the scatter plot area for the first window.
 fig, ax = plt.subplots(figsize=(6, 4))
 canvas = FigureCanvasTkAgg(fig, master=root)
 canvas.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
-# Function to update scatter plot
+# Updates the scatter plot when an IP is selected.
+# Shows a plot of ports vs. counts for the chosen IP.
 def update_plot(event):
     ax.clear()
     selected_ip = combo.get()
@@ -380,12 +389,12 @@ def update_plot(event):
 
 combo.bind("<<ComboboxSelected>>", update_plot)
 
-# Create second frame (Toplevel window)
+# Creates the second window for port and domain charts.
 second_window = tk.Toplevel()
 second_window.title("Port vs Domain Count")
 second_window.geometry("1200x600")
 
-# Define dynamic date range for second frame
+# Sets date range for the second window (last 10 days).
 today = datetime.today()
 max_date = today
 min_date = today - timedelta(days=10)
@@ -393,25 +402,26 @@ min_date_str_frame2 = min_date.strftime('%B %d, %Y')
 max_date_str_frame2 = max_date.strftime('%B %d, %Y')
 calendar_label_frame2 = f"Select Date ({min_date_str_frame2} to {max_date_str_frame2})"
 
-# Create frame to hold both plots side by side
+# Creates a frame to hold bar and pie charts side by side.
 plot_frame = tk.Frame(second_window)
 plot_frame.pack(pady=10, fill="both", expand=True)
 
-# Create subframes for bar plot and pie chart
+# Creates subframes for bar plot (left) and pie chart (right).
 bar_frame = tk.Frame(plot_frame)
 bar_frame.pack(side=tk.LEFT, padx=10, fill="both", expand=True)
 
 pie_frame = tk.Frame(plot_frame)
 pie_frame.pack(side=tk.RIGHT, padx=10, fill="both", expand=True)
 
-# Create date entry widget for second frame (above bar plot)
+# Adds a date picker to the second window for selecting a date.
 tk.Label(bar_frame, text=calendar_label_frame2, font=("Times New Roman", 12, "bold")).pack(pady=5)
 date_entry_frame2 = DateEntry(bar_frame, width=30, date_pattern="yyyy-mm-dd",
                               mindate=min_date, maxdate=max_date,
                               year=today.year, month=today.month, day=today.day)
 date_entry_frame2.pack(pady=5)
 
-# Button to fetch data for second frame (above bar plot)
+# Fetches data for the second window when a date is selected.
+# Checks PLOT_DATA; if not found or today, fetches from main database and updates PLOT_DATA.
 def on_date_submit_frame2():
     date_str = date_entry_frame2.get().strip()
     if not date_str:
@@ -453,13 +463,13 @@ def on_date_submit_frame2():
 
 tk.Button(bar_frame, text="Get Date", command=on_date_submit_frame2).pack(pady=5)
 
-# Create dropdown (Combobox) for second frame (above pie chart)
+# Adds a dropdown to select a port for the pie chart in the second window.
 tk.Label(pie_frame, text="Select dstport:", font=("Times New Roman", 12)).pack(pady=5)
 port_combo = ttk.Combobox(pie_frame, values=frame_data['frame2']['unique_dstports'], state='readonly', width=30)
 port_combo.pack(pady=5)
 port_combo.set("Select dstport")
 
-# Create Matplotlib figures for bar plot and pie chart
+# Sets up the bar plot and pie chart areas for the second window.
 fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
 canvas_bar = FigureCanvasTkAgg(fig_bar, master=bar_frame)
 canvas_bar.get_tk_widget().pack(pady=10, fill="both", expand=True)
@@ -468,7 +478,8 @@ fig_pie, ax_pie = plt.subplots(figsize=(6, 4))
 canvas_pie = FigureCanvasTkAgg(fig_pie, master=pie_frame)
 canvas_pie.get_tk_widget().pack(pady=10, fill="both", expand=True)
 
-# Function to update both bar plot and pie chart
+# Updates the bar and pie charts in the second window.
+# Bar chart shows top 20 ports; pie chart shows domain percentages for a selected port.
 def update_plots(event=None):
     ax_bar.clear()
     if frame_data['frame2']['dst_counts'] is not None:
@@ -565,7 +576,7 @@ def update_plots(event=None):
 
 port_combo.bind("<<ComboboxSelected>>", update_plots)
 
-# Fetch initial data for today's date in both frames and update charts
+# Fetches initial data for today's date for both windows and updates their charts.
 fetch_data_frame1(today.strftime("%Y%m%d"))
 update_plot(None)
 fetch_data_frame2(today.strftime("%Y%m%d"))
