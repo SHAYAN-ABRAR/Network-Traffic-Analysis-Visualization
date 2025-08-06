@@ -588,3 +588,9 @@ port_combo.set("Select dstport")
 #update_plots()
 
 #root.mainloop()
+
+
+
+
+#python topTwentyPorts.py "PORTS" 20250802
+#python topTwentyPorts.py "DOMAINS" 20250802 443
