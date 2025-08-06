@@ -24,4 +24,7 @@ if __name__ == "__main__":
         case _:
             print(f"Invalid number of arguments or unknown parameter {callFunct}")
 
+
+#python topTwentyPorts.py "PORTS" 20250802
+#python topTwentyPorts.py "DOMAINS" 20250802 443
     

@@ -181,3 +181,9 @@ if __name__ == "__main__":
     selected_port = sys.argv[2]
     print(f"date_str: {date_str}, port: {selected_port}")
     insert_port_domain_hits(date_str, selected_port)
+
+
+
+
+#python topTwentyPorts.py "PORTS" 20250802
+#python topTwentyPorts.py "DOMAINS" 20250802 443
